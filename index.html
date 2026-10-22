@@ -2646,12 +2646,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     <!-- Login -->
     <div id="login-overlay" class="fixed inset-0 bg-stone-900 flex items-center justify-center p-4" style="z-index:100">
-        <form id="login-form" class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-            <div class="text-center"><i class="fa-solid fa-scissors text-rose-500 text-3xl mb-2"></i><h1 class="text-xl font-bold text-gray-800">Gestor de Salón</h1><p class="text-sm text-gray-500">Ingresa a tu salón</p></div>
-            <input type="text" id="login-email" required autocomplete="username" placeholder="Usuario" class="w-full rounded-md border-gray-300 border px-3 py-2 text-sm outline-none focus:ring-rose-500">
+        <div id="login-loading" class="text-center text-stone-300">
+            <i class="fa-solid fa-scissors text-rose-500 text-3xl mb-3"></i>
+            <p id="login-loading-text" class="text-sm">Conectando…</p>
+        </div>
+        <form id="login-form" class="hidden bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div class="text-center"><i class="fa-solid fa-scissors text-rose-500 text-3xl mb-2"></i><h1 class="text-xl font-bold text-gray-800">Gestor de Salón</h1><p class="text-sm text-gray-500">Ingresá con tu cuenta</p></div>
+            <input type="email" id="login-email" required autocomplete="username" placeholder="Correo electrónico" class="w-full rounded-md border-gray-300 border px-3 py-2 text-sm outline-none focus:ring-rose-500">
             <input type="password" id="login-pass" required autocomplete="current-password" placeholder="Contraseña" class="w-full rounded-md border-gray-300 border px-3 py-2 text-sm outline-none focus:ring-rose-500">
             <p id="login-error" class="text-sm text-red-600 hidden"></p>
             <button type="submit" id="login-btn" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-medium py-2 rounded-md transition">Ingresar</button>
+            <button type="button" id="login-forgot" class="w-full text-sm text-rose-600 hover:underline">Olvidé mi contraseña</button>
         </form>
     </div>
     <div id="sync-pill" class="hidden fixed bottom-6 right-3 bg-stone-900/90 text-white text-xs rounded-full pl-3 pr-1 py-1 flex items-center gap-2 shadow-lg" style="z-index:40">
@@ -2661,29 +2666,188 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <script>
 (function () {
-    const USER = 'user', PASS = '123456', FLAG = 'salon_session';
     const $ = id => document.getElementById(id);
-    const get = () => { try { return localStorage.getItem(FLAG) === '1'; } catch (e) { return false; } };
-    const set = v => { try { v ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch (e) {} };
-    function show(ok) {
-        $('login-overlay').classList.toggle('hidden', ok);
-        $('sync-pill').classList.toggle('hidden', !ok);
-        if (ok) $('sync-user').textContent = USER;
-    }
-    $('login-form').addEventListener('submit', e => {
-        e.preventDefault();
-        const err = $('login-error');
-        if ($('login-email').value.trim().toLowerCase() === USER && $('login-pass').value === PASS) {
-            set(true); $('login-pass').value = ''; err.classList.add('hidden'); show(true);
-        } else { err.textContent = 'Usuario o contraseña incorrectos.'; err.classList.remove('hidden'); }
-    });
-    $('logout-btn').addEventListener('click', () => { set(false); show(false); });
-    show(get());
+    /* ===== Sincronización: se anotan los cambios de datos desde el primer momento; el módulo de Firebase los sube ===== */
+    window.__SYNC_KEYS = ['salon_equipos', 'salon_clientes', 'salon_proveedores', 'salon_papelera', 'salon_entregados', 'salon_servicios', 'salon_espera', 'salon_caja', 'salon_stock', 'salon_config', 'salon_pins', 'salon_ac_hist', 'salon_equipos_last_order'];
+    window.__syncQueue = new Set(); window.__syncApplying = false;
+    const rawSet = Storage.prototype.setItem, rawRem = Storage.prototype.removeItem;
+    window.__rawSet = (k, v) => rawSet.call(localStorage, k, v); window.__rawRem = k => rawRem.call(localStorage, k);
+    const note = (st, k) => { if (st === localStorage && !window.__syncApplying && window.__SYNC_KEYS.indexOf(k) >= 0) { window.__syncQueue.add(k); if (window.__syncKick) window.__syncKick(); else { try { const d = new Set(JSON.parse(localStorage.getItem('salon_sync_dirty') || '[]')); d.add(k); rawSet.call(localStorage, 'salon_sync_dirty', JSON.stringify([...d])); window.__syncQueue.delete(k); } catch (e) {} } } };
+    Storage.prototype.setItem = function (k, v) { rawSet.apply(this, arguments); note(this, k); };
+    Storage.prototype.removeItem = function (k) { rawRem.apply(this, arguments); note(this, k); };
+    // Si el servicio de acceso no carga (sin internet), solo entra quien ya había iniciado sesión en este equipo
+    setTimeout(() => {
+        if (window.__fbReady) return;
+        let uid = null; try { uid = localStorage.getItem('salon_uid'); } catch (e) {}
+        if (uid) { $('login-overlay').classList.add('hidden'); $('sync-pill').classList.remove('hidden'); $('sync-user').textContent = 'Sin conexión'; $('sync-dot').className = 'w-2 h-2 rounded-full bg-red-400'; $('logout-btn').classList.add('hidden'); }
+        else { $('login-loading').classList.add('hidden'); $('login-form').classList.remove('hidden'); const e = $('login-error'); e.textContent = 'No se pudo conectar con el servicio de acceso. Revisá tu internet e intentá de nuevo.'; e.classList.remove('hidden'); $('login-btn').disabled = true; }
+    }, 8000);
     function applyTheme(d) { document.documentElement.classList.toggle('dark', d); document.querySelectorAll('.theme-btn i').forEach(i => i.className = (i.className.includes('text-xl') ? 'text-xl ' : '') + 'fa-solid ' + (d ? 'fa-sun' : 'fa-moon')); }
     window.toggleTheme = () => { const d = !document.documentElement.classList.contains('dark'); try { localStorage.setItem('salon_theme', d ? 'dark' : 'light'); } catch (e) {} applyTheme(d); };
     applyTheme(document.documentElement.classList.contains('dark'));
 })();
 </script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js";
+import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, getDocs, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyCdakjVvQ725q0S2bLcwCsR2iM03aKS7Yc",
+    authDomain: "gestordesalon.firebaseapp.com",
+    projectId: "gestordesalon",
+    storageBucket: "gestordesalon.firebasestorage.app",
+    messagingSenderId: "812556506243",
+    appId: "1:812556506243:web:4188b392647083f6adb7b6"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+let fs;
+try { fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); } catch (e) { fs = getFirestore(app); }
+window.__fbReady = true;
+
+const $ = id => document.getElementById(id);
+const SYNC = window.__SYNC_KEYS, CHUNK = 300000;          // 300.000 caracteres por documento: queda lejos del límite de 1 MiB de Firestore
+const DIRTY = 'salon_sync_dirty', UIDK = 'salon_uid';
+let uid = null, unsub = null, timer = null, pushing = false, latestRemote = null;
+const knownN = {};
+const ls = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const dirty = () => { try { return new Set(JSON.parse(ls(DIRTY) || '[]')); } catch (e) { return new Set(); } };
+const saveDirty = d => { try { window.__rawSet(DIRTY, JSON.stringify([...d])); } catch (e) {} };
+const col = () => collection(fs, 'salones', uid, 'datos');
+const msg = (t, k) => { try { window.showToast && window.showToast(t, k); } catch (e) {} };
+
+const pill = (state, text) => {
+    $('sync-pill').classList.remove('hidden');
+    $('sync-dot').className = 'w-2 h-2 rounded-full ' + (state === 'ok' ? 'bg-green-400' : state === 'wait' ? 'bg-amber-400' : 'bg-red-400');
+    if (text) $('sync-user').textContent = text;
+    $('sync-pill').title = state === 'ok' ? 'Todo sincronizado' : state === 'wait' ? 'Sincronizando…' : 'Sin sincronizar: se reintenta solo';
+};
+const who = () => (auth.currentUser && auth.currentUser.email) || '';
+
+// ---- subir ----
+const schedule = (ms = 1500) => { if (!uid) return; clearTimeout(timer); timer = setTimeout(push, ms); pill('wait'); };
+window.__syncKick = () => { const d = dirty(); window.__syncQueue.forEach(k => d.add(k)); window.__syncQueue.clear(); saveDirty(d); schedule(); };
+async function pushKey(k) {
+    const v = ls(k), ts = Date.now(), parts = [];
+    if (v !== null) for (let i = 0; i < v.length; i += CHUNK) parts.push(v.slice(i, i + CHUNK));
+    const batch = writeBatch(fs), n = parts.length;
+    if (!n) batch.set(doc(col(), k + '__0'), { key: k, i: 0, n: 0, ts, data: '' });
+    parts.forEach((p, i) => batch.set(doc(col(), k + '__' + i), { key: k, i, n, ts, data: p }));
+    for (let i = Math.max(n, 1); i < (knownN[k] || 0); i++) batch.delete(doc(col(), k + '__' + i));
+    await batch.commit();
+    knownN[k] = Math.max(n, 1);
+}
+async function push() {
+    if (!uid || pushing) return;
+    const d = dirty(); if (!d.size) { pill('ok'); return; }
+    pushing = true; pill('wait');
+    try { for (const k of [...d]) { await pushKey(k); const cur = dirty(); cur.delete(k); saveDirty(cur); } pill('ok'); }
+    catch (e) { console.error('Sync error', e); pill('err'); setTimeout(() => schedule(0), 20000); }
+    finally { pushing = false; if (dirty().size && pill) { const l = dirty(); if (l.size) { clearTimeout(timer); timer = setTimeout(push, 2500); } } }
+}
+
+// ---- bajar ----
+function assemble(snap) {
+    const by = {}, out = {};
+    snap.forEach(d => { const x = d.data(); (by[x.key] = by[x.key] || []).push(x); });
+    Object.keys(by).forEach(k => {
+        const top = Math.max(...by[k].map(x => x.ts)), parts = by[k].filter(x => x.ts === top), n = parts[0].n;
+        if (n === 0) { out[k] = null; knownN[k] = 1; return; }
+        if (parts.length !== n) return;                       // todavía llegando: se espera al próximo aviso
+        parts.sort((a, b) => a.i - b.i); out[k] = parts.map(p => p.data).join(''); knownN[k] = n;
+    });
+    return out;
+}
+const applyRemote = (remote, skip) => { let ch = false; window.__syncApplying = true;
+    try { Object.keys(remote).forEach(k => { if (skip && skip.has(k) || SYNC.indexOf(k) < 0) return; const v = remote[k], cur = ls(k); if (v === cur || (v === null && cur === null)) return; if (v === null) window.__rawRem(k); else window.__rawSet(k, v); ch = true; }); }
+    finally { window.__syncApplying = false; }
+    return ch; };
+function wipeLocal() { window.__syncApplying = true; try { SYNC.forEach(k => window.__rawRem(k)); window.__rawRem(DIRTY); window.__rawRem(UIDK); } finally { window.__syncApplying = false; } }
+
+function banner() {
+    if ($('sync-banner')) return;
+    const b = document.createElement('div'); b.id = 'sync-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:90;background:#be185d;color:#fff;font-size:14px;padding:10px 14px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
+    b.innerHTML = 'Hay cambios hechos desde otro dispositivo. <button type="button" style="background:#fff;color:#be185d;border-radius:999px;padding:4px 14px;font-weight:600">Actualizar</button>';
+    b.querySelector('button').onclick = () => { if (latestRemote) applyRemote(latestRemote, dirty()); location.reload(); };
+    document.body.appendChild(b);
+}
+function listen() {
+    if (unsub) unsub();
+    unsub = onSnapshot(col(), snap => {
+        const real = snap.docChanges().some(c => !c.doc.metadata.hasPendingWrites);
+        const remote = assemble(snap);
+        if (!real) return;
+        const d = dirty(); let diff = false;
+        Object.keys(remote).forEach(k => { if (!d.has(k) && SYNC.indexOf(k) >= 0 && remote[k] !== ls(k) && !(remote[k] === null && ls(k) === null)) diff = true; });
+        if (diff) { latestRemote = remote; banner(); }
+    }, e => { console.error('Listen error', e); pill('err'); });
+}
+
+// ---- arranque tras iniciar sesión ----
+const mainKeys = ['salon_equipos', 'salon_clientes', 'salon_proveedores', 'salon_entregados', 'salon_papelera', 'salon_caja', 'salon_stock'];
+async function start(user) {
+    uid = user.uid;
+    const stored = ls(UIDK); let changed = false;
+    if (stored && stored !== uid) { wipeLocal(); changed = true; }          // otra cuenta usó este equipo: no se mezclan datos
+    const snap = await getDocs(col());
+    const d = dirty();
+    if (snap.metadata.fromCache && !snap.size) {                           // sin conexión y sin copia local de la nube: no se decide nada
+        try { window.__rawSet(UIDK, uid); } catch (e) {}
+    } else {
+        const remote = assemble(snap), hasRemote = Object.keys(remote).length > 0, localHas = mainKeys.some(k => ls(k) !== null);
+        let local = false;
+        if (hasRemote && localHas && !stored && !d.size) local = !confirm('Esta cuenta ya tiene datos en la nube y este equipo también tiene datos guardados.\n\nAceptar: usar los de la nube (los de este equipo se reemplazan).\nCancelar: subir los de este equipo y reemplazar la nube.');
+        if (!hasRemote || local) SYNC.forEach(k => { if (ls(k) !== null) d.add(k); });
+        else {
+            SYNC.forEach(k => { if (d.has(k)) return; if (!(k in remote) && ls(k) !== null) d.add(k); });
+            if (applyRemote(remote, d)) changed = true;
+        }
+        saveDirty(d); try { window.__rawSet(UIDK, uid); } catch (e) {}
+    }
+    if (changed) { location.reload(); return; }
+    listen(); pill(dirty().size ? 'wait' : 'ok', who()); $('logout-btn').classList.remove('hidden');
+    $('login-overlay').classList.add('hidden'); push();
+}
+
+const errTxt = c => ({ 'auth/invalid-credential': 'Correo o contraseña incorrectos.', 'auth/wrong-password': 'Correo o contraseña incorrectos.', 'auth/user-not-found': 'Correo o contraseña incorrectos.', 'auth/invalid-email': 'El correo no es válido.', 'auth/user-disabled': 'Esta cuenta está desactivada. Contactá a soporte.', 'auth/too-many-requests': 'Demasiados intentos. Esperá unos minutos o restablecé la contraseña.', 'auth/network-request-failed': 'Sin conexión. Revisá tu internet.', 'auth/operation-not-supported-in-this-environment': 'Abrí la app desde su dirección web (https), no desde un archivo.' }[c] || 'No se pudo iniciar sesión. Intentá de nuevo.');
+const showForm = (text) => { $('login-loading').classList.add('hidden'); $('login-form').classList.remove('hidden'); $('login-overlay').classList.remove('hidden'); $('sync-pill').classList.add('hidden'); const e = $('login-error'); if (text) { e.textContent = text; e.classList.remove('hidden'); } else e.classList.add('hidden'); $('login-btn').disabled = false; };
+
+onAuthStateChanged(auth, async user => {
+    if (!user) { uid = null; if (unsub) { unsub(); unsub = null; } showForm(); return; }
+    $('login-form').classList.add('hidden'); $('login-loading').classList.remove('hidden'); $('login-loading-text').textContent = 'Sincronizando tus datos…';
+    try { await start(user); }
+    catch (e) {
+        console.error('Start error', e);
+        if (e && e.code === 'permission-denied') { $('login-loading-text').innerHTML = 'Tu cuenta no tiene permiso para acceder a los datos.<br>Contactá a soporte.<br><button id="deny-out" type="button" class="mt-4 px-4 py-2 rounded-md bg-stone-700 text-white text-sm">Salir</button>'; $('deny-out').onclick = () => signOut(auth); return; }
+        if (ls(UIDK) === user.uid) { listen(); pill('err', who()); $('login-overlay').classList.add('hidden'); }      // sin conexión: se trabaja con lo guardado y se sincroniza al volver
+        else { $('login-loading-text').innerHTML = 'No se pudo cargar tus datos. Revisá tu internet.<br><button id="retry-btn" type="button" class="mt-4 px-4 py-2 rounded-md bg-rose-600 text-white text-sm">Reintentar</button>'; $('retry-btn').onclick = () => location.reload(); }
+    }
+});
+
+$('login-form').addEventListener('submit', async e => {
+    e.preventDefault(); const btn = $('login-btn'); btn.disabled = true; $('login-error').classList.add('hidden');
+    try { await signInWithEmailAndPassword(auth, $('login-email').value.trim(), $('login-pass').value); $('login-pass').value = ''; }
+    catch (err) { showForm(errTxt(err && err.code)); }
+});
+$('login-forgot').addEventListener('click', async () => {
+    const m = $('login-email').value.trim(); if (!m) return showForm('Escribí tu correo arriba y tocá de nuevo "Olvidé mi contraseña".');
+    try { await sendPasswordResetEmail(auth, m); showForm(''); const e = $('login-error'); e.className = 'text-sm text-green-700'; e.textContent = 'Si el correo está registrado, te enviamos un enlace para cambiar la contraseña.'; setTimeout(() => { e.className = 'text-sm text-red-600 hidden'; }, 9000); }
+    catch (err) { showForm(errTxt(err && err.code)); }
+});
+$('logout-btn').addEventListener('click', async () => {
+    if (dirty().size) { clearTimeout(timer); await push(); }
+    if (dirty().size && !confirm('Hay cambios que todavía no se subieron (¿sin internet?). Si salís ahora se pierden de este equipo.\n\n¿Salir igual?')) return;
+    if (!dirty().size && !confirm('¿Cerrar sesión? Los datos quedan guardados en tu cuenta.')) return;
+    if (unsub) unsub(); wipeLocal();
+    try { await signOut(auth); } catch (e) {}
+    location.reload();
+});
+window.addEventListener('online', () => { if (uid) schedule(500); });
+</script>
+
 <script>
 /* ===== Configuración: apariencia, datos del salón y respaldo. El modo admin es oculto (solo el dueño sabe cómo entrar) ===== */
 document.addEventListener('DOMContentLoaded', () => {
