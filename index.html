@@ -2616,6 +2616,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const _nv = navigate;
   navigate = function (v) { _nv(v); closeMore(); mas.classList.toggle('active', !!$('more-panel').querySelector('.nav-link.active')); if (v === 'volver') voDraw(); if (v === 'espera') weDraw(); if (v === 'servicios') drawCat(); if (v === 'caja') caDraw(); if (v === 'stock') stockDraw(); if (v === 'hoy') hoyDraw(); };
+  // Tiempo real: cuando llegan cambios de otro dispositivo se vuelve a leer todo desde el almacenamiento y se redibuja, sin recargar la página
+  window.__reloadState = () => {
+    try {
+      const c = LS('salon_servicios', null); if (c) { cat.length = 0; c.forEach(x => cat.push(x)); }
+      wait = LS('salon_espera', []);
+      caja = LS('salon_caja', null) || { mov: [], cierres: {} };
+      stock = LS('salon_stock', []);
+      pins = LS('salon_pins', []);
+      loadAllData();
+      updateAllViews(); drawCat(); stockDraw(); weDraw(); caDraw(); hoyDraw(); placePins(); masDot();
+      return true;
+    } catch (e) { console.error('reloadState', e); return false; }
+  };
   // ---- Barra inferior en celular: el menú siempre a mano (el lateral queda como "Menú") ----
   { const st = document.createElement('style');
     st.textContent = `#bottom-nav{display:none}
@@ -2782,7 +2795,12 @@ function listen() {
         if (!real) return;
         const d = dirty(); let diff = false;
         Object.keys(remote).forEach(k => { if (!d.has(k) && SYNC.indexOf(k) >= 0 && remote[k] !== ls(k) && !(remote[k] === null && ls(k) === null)) diff = true; });
-        if (diff) { latestRemote = remote; banner(); }
+        if (diff) {
+            latestRemote = remote;
+            const cfgChanged = remote['salon_config'] !== undefined && remote['salon_config'] !== ls('salon_config') && !d.has('salon_config');
+            if (!cfgChanged && typeof window.__reloadState === 'function' && applyRemote(remote, d) !== undefined && window.__reloadState()) { msg('Datos actualizados desde otro dispositivo', 'info'); const b = $('sync-banner'); if (b) b.remove(); }
+            else banner();      // cambió la configuración (nombre, país, etc.): hace falta recargar
+        }
     }, e => { console.error('Listen error', e); pill('err'); });
 }
 
